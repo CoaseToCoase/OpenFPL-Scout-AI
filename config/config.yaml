@@ -73,7 +73,13 @@ official_fpl:
 # Temporary, permission-pending enrichment of missing historical match inputs.
 # Official FPL remains authoritative for player identity, history, and fixtures.
 fpl_data_inference:
-  enabled: true
+  # Disabled in this fork: FPL Data (fpl-data.co.uk) permission is
+  # unresolved upstream (permission_status below) and its scraper
+  # (scripts/download_fpl_data.py) hits an undocumented Dash callback
+  # rather than a published API. Our training/inference path is
+  # official-FPL-only end to end -- see trainer.py and
+  # scripts/prepare_training_data.py.
+  enabled: false
   start_gameweek: 2
   season: "2026_27"
   local_path: "data/external/fpl-data-stats-2027.csv"
