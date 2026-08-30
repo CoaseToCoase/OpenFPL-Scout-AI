@@ -31,9 +31,21 @@ SEASONS = ("2023-24", "2024-25", "2025-26")
 POSITION_TO_ELEMENT_TYPE = {"GK": 1, "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4}
 
 # vaastav column -> our canonical column (src/features.py naming)
+#
+# "name" is deliberately NOT mapped to web_name here: vaastav's merged_gw.csv
+# "name" column is the player's FULL name ("Erling Haaland"), while the
+# official FPL API -- which src/scout.py and our own live inference both
+# use -- returns the short web_name ("Haaland"). Training the categorical
+# web_name feature on full names made it near-useless at inference: only
+# 3 of 606 live web_names exactly matched a training-time category (found
+# 2026-08-30, comparing GW3 live pull against the 2025-26 training slice),
+# silently zeroing the OneHotEncoder's "unknown category" path for almost
+# every player and erasing ~25% of the model's own reported feature
+# importance (player identity). web_name is instead joined in from each
+# season's players_raw.csv (id -> web_name), the same short form the live
+# API serves.
 RENAME = {
     "element": "id",
-    "name": "web_name",
     "team": "team_name",
     "round": "gameweek",
     "total_points": "total_points",
@@ -49,7 +61,14 @@ RENAME = {
 def load_season(season: str, teams: pd.DataFrame) -> pd.DataFrame:
     path = VAASTAV_DIR / season / "gws" / "merged_gw.csv"
     df = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    df = df.drop(columns=["name"], errors="ignore")
     df = df.rename(columns=RENAME)
+
+    web_names = pd.read_csv(
+        VAASTAV_DIR / season / "players_raw.csv", encoding="utf-8-sig",
+        usecols=["id", "web_name"],
+    )
+    df = df.merge(web_names, on="id", how="left")
 
     df["position"] = df["position"].map(POSITION_TO_ELEMENT_TYPE)
     df = df.dropna(subset=["position"])  # drops Mystery-Chip "AM" pseudo-rows
