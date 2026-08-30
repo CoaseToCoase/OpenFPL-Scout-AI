@@ -89,7 +89,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             raise SystemExit(f"{name}: feature_names_in_ does not match MODEL_FEATURES")
         per_model[name] = np.clip(pipeline.predict(X), 0, None)
 
-    ensemble_pred = np.clip(np.mean(list(per_model.values()), axis=0), 0, None)
+    # median, not mean: walk-forward backtest against 2025-26 (37 gameweeks,
+    # 28,497 rows) showed median-of-4 beating mean-of-4 on MAE in EVERY
+    # single gameweek (37/37) at the same RMSE -- MLP's occasional wide
+    # miss drags the mean down; the median is naturally robust to it
+    # without needing to drop MLP from the ensemble outright. Found
+    # 2026-08-30, see scripts/backtest_last_season.py.
+    ensemble_pred = np.clip(np.median(list(per_model.values()), axis=0), 0, None)
 
     trained_at = None
     metadata_path = MODELS_DIR / "training_metadata.json"
