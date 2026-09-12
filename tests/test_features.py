@@ -4,22 +4,36 @@ import numpy as np
 import pandas as pd
 
 from src.features import (
+    CATEGORICAL_FEATURES,
+    HISTORY_FEATURES,
     MODEL_FEATURES,
     add_rolling_history,
-    estimate_fixture_difficulty,
     ensure_feature_columns,
     normalize_fpl_columns,
     prepare_recent_player_features,
 )
 
+# This module was UNCOLLECTABLE from upstream e8ceadf (15 Aug 2026) until
+# 2026-09-12: that commit deleted estimate_fixture_difficulty and the temporal
+# feature block from src/features.py without touching the tests, so the import
+# raised and pytest skipped the whole file — every test in it, including the
+# ones still valid, silently stopped running for a month. Tests asserting the
+# pre-refactor contract (points_mean_*, start_probability_5, fixture_difficulty,
+# and "identity is not a feature") are removed rather than rewritten: those
+# features no longer exist, and web_name is now deliberately IN the model as
+# the identity feature.
+
 
 class FeaturePreparationTests(unittest.TestCase):
-    def test_model_contract_uses_form_instead_of_player_identity(self):
-        self.assertNotIn("web_name", MODEL_FEATURES)
-        self.assertIn("points_mean_3", MODEL_FEATURES)
-        self.assertIn("points_mean_10", MODEL_FEATURES)
-        self.assertIn("start_probability_5", MODEL_FEATURES)
-        self.assertIn("fixture_difficulty", MODEL_FEATURES)
+    def test_model_contract_is_identity_plus_fixture_plus_rolling_history(self):
+        # web_name IS a feature: the identity column was silently nullified at
+        # inference until 2026-08-30 (full names vs web_name) and Haaland
+        # predicted ~4 pts as a result. The fixture pair matters just as much —
+        # inference must overwrite them with the UPCOMING fixture (2026-09-12).
+        self.assertIn("web_name", MODEL_FEATURES)
+        self.assertIn("opponent_team_name", MODEL_FEATURES)
+        self.assertIn("was_home", MODEL_FEATURES)
+        self.assertEqual(MODEL_FEATURES, [*CATEGORICAL_FEATURES, "gameweek", *HISTORY_FEATURES])
 
     def test_normalizes_legacy_stats_and_team_names(self):
         source = pd.DataFrame(
@@ -74,44 +88,6 @@ class FeaturePreparationTests(unittest.TestCase):
 
         self.assertEqual(double_gameweek.tolist(), [1.0, 1.0])
 
-    def test_temporal_features_only_use_prior_matches(self):
-        source = pd.DataFrame(
-            {
-                "_season": [2026, 2026, 2026],
-                "id": [10, 10, 10],
-                "gameweek": [1, 2, 3],
-                "total_points": [1, 3, 100],
-                "minutes": [90, 30, 90],
-                "expected_goal_involvements": [0.1, 0.3, 9.0],
-                "expected_points": [2.0, 4.0, 20.0],
-            }
-        )
-
-        result = add_rolling_history(source, window=5)
-        gameweek_three = result.loc[result.gameweek == 3].iloc[0]
-
-        self.assertEqual(gameweek_three["points_last"], 3.0)
-        self.assertEqual(gameweek_three["points_mean_3"], 2.0)
-        self.assertEqual(gameweek_three["points_mean_10"], 2.0)
-        self.assertEqual(gameweek_three["points_std_5"], 1.0)
-        self.assertEqual(gameweek_three["points_trend_3_10"], 0.0)
-        self.assertEqual(gameweek_three["appearance_probability_5"], 1.0)
-        self.assertEqual(gameweek_three["start_probability_5"], 0.5)
-
-    def test_fixture_difficulty_uses_only_prior_team_form(self):
-        source = pd.DataFrame(
-            {
-                "team_name": ["Arsenal", "Chelsea", "Arsenal", "Chelsea"],
-                "gameweek": [1, 1, 2, 2],
-                "total_points": [10, 1, 8, 2],
-            }
-        )
-
-        result = estimate_fixture_difficulty(source, gameweek=3)
-
-        self.assertEqual(result["Arsenal"], 5.0)
-        self.assertEqual(result["Chelsea"], 3.0)
-
     def test_model_contract_adds_and_orders_missing_features(self):
         result = ensure_feature_columns(pd.DataFrame({"gameweek": [1]}))
 
@@ -137,7 +113,6 @@ class FeaturePreparationTests(unittest.TestCase):
 
         self.assertEqual(result.id.tolist(), [1, 2])
         self.assertEqual(result.loc[result.id == 1, "goals"].iloc[0], 2.0)
-        self.assertEqual(result.loc[result.id == 1, "points_last"].iloc[0], 3.0)
         self.assertEqual(result.loc[result.id == 1, "gameweek"].iloc[0], 3)
         self.assertEqual(
             result.loc[result.id == 1, "team_name"].iloc[0], "Manchester United"
