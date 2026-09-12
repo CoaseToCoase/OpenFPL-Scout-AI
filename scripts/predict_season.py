@@ -35,24 +35,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
 import numpy as np
-import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.predict_gameweek import MODEL_NAMES, MODELS_DIR, load_ensemble  # noqa: E402
-from src.features import (  # noqa: E402
-    MODEL_FEATURES,
-    TEAM_NAME_ALIASES,
-    ensure_feature_columns,
-    prepare_recent_player_features,
-)
+from src.features import prepare_recent_player_features  # noqa: E402
+from src.fixture_projection import predict_frame, project, team_fixtures  # noqa: E402
 from src.official_fpl import OfficialFPLClient  # noqa: E402
 
 LAST_GAMEWEEK = 38
@@ -69,60 +63,6 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--compare-gw", type=int,
                         help="Report how the fixture fix changes this gameweek, then exit")
     return parser.parse_args(argv)
-
-
-def team_fixtures(client: OfficialFPLClient) -> dict:
-    """{team_name: {gw: [(opponent_name, was_home), ...]}} for unplayed fixtures."""
-    # The fixture list uses the SHORT club names ("Man City", "Spurs") while
-    # player history is canonicalised to the long ones. Unmapped, five clubs
-    # matched no fixture at all and every one of their players projected 0
-    # (caught 2026-09-12 by Gvardiol scoring zero for the season).
-    teams = {t["id"]: TEAM_NAME_ALIASES.get(t["name"], t["name"])
-             for t in client.bootstrap()["teams"]}
-    out: dict = defaultdict(lambda: defaultdict(list))
-    for f in client.fixtures():
-        gw = f.get("event")
-        if gw is None:                      # not yet scheduled to a gameweek
-            continue
-        home, away = teams.get(f["team_h"]), teams.get(f["team_a"])
-        if not home or not away:
-            continue
-        out[home][int(gw)].append((away, True))
-        out[away][int(gw)].append((home, False))
-    return out
-
-
-def predict_frame(models: dict, features: pd.DataFrame) -> np.ndarray:
-    """Ensemble MEDIAN, per predict_gameweek: beat the mean in 37/37 gameweeks."""
-    X = ensure_feature_columns(features, MODEL_FEATURES)
-    per_model = []
-    for name, pipeline in models.items():
-        expected = getattr(pipeline, "feature_names_in_", None)
-        if expected is not None and list(expected) != MODEL_FEATURES:
-            raise SystemExit(f"{name}: feature_names_in_ does not match MODEL_FEATURES")
-        per_model.append(np.clip(pipeline.predict(X), 0, None))
-    return np.clip(np.median(per_model, axis=0), 0, None)
-
-
-def project(models, base: pd.DataFrame, fixtures: dict, gws: list) -> dict:
-    """{element_id: {gw: points}} — one model call per gameweek, fixtures swapped."""
-    out: dict = defaultdict(dict)
-    for gw in gws:
-        rows, index = [], []
-        for i, r in base.iterrows():
-            for opponent, was_home in fixtures.get(r["team_name"], {}).get(gw, []):
-                row = r.copy()
-                row["opponent_team_name"] = opponent
-                row["was_home"] = was_home
-                row["gameweek"] = gw
-                rows.append(row)
-                index.append(int(r["id"]))
-        if not rows:
-            continue
-        preds = predict_frame(models, pd.DataFrame(rows).reset_index(drop=True))
-        for eid, p in zip(index, preds):
-            out[eid][gw] = out[eid].get(gw, 0.0) + float(p)   # DGW: sum the fixtures
-    return out
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:

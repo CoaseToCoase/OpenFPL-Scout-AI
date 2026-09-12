@@ -36,6 +36,7 @@ from src.features import (
     ensure_feature_columns,
     prepare_recent_player_features,
 )
+from src.fixture_projection import attach_fixtures, predict_by_model, team_fixtures
 from src.official_fpl import OfficialFPLClient
 
 MODELS_DIR = REPO_ROOT / "models"
@@ -51,6 +52,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--history-window", type=int, default=5,
         help="Rolling-history window in past gameweeks (must match training: 5)",
+    )
+    parser.add_argument(
+        "--last-opponent", action="store_true",
+        help="Pre-2026-09-12 behaviour: predict against the opponent the player "
+             "LAST faced instead of the upcoming fixture. Reproduces the numbers "
+             "stored for GW<=4 only; not for live use.",
     )
     return parser.parse_args(argv)
 
@@ -79,15 +86,37 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     features = prepare_recent_player_features(
         history, gameweek=gameweek, history_window=args.history_window
     )
-    X = ensure_feature_columns(features, MODEL_FEATURES)
-
     models = load_ensemble()
-    per_model = {}
+
+    # The UPCOMING fixture is what the model should be asked about: training
+    # rows carry each match's own opponent, while prepare_recent_player_features
+    # can only fill in the one last PLAYED. Fixed 2026-09-12; GW<=4 predictions
+    # were made under the old behaviour and are deliberately left as they were,
+    # so the accuracy history records what we actually said. --last-opponent
+    # reproduces it. Double gameweeks now correctly sum their fixtures.
+    if args.last_opponent:
+        frame, order = features, [int(i) for i in features["id"]]
+    else:
+        fixtures = team_fixtures(client)
+        frame, order = attach_fixtures(features, fixtures, gameweek)
+        if not order:
+            raise SystemExit(f"No fixtures found for gameweek {gameweek}")
+
+    raw = predict_by_model(models, frame)
     for name, pipeline in models.items():
         expected = getattr(pipeline, "feature_names_in_", None)
         if expected is not None and list(expected) != MODEL_FEATURES:
             raise SystemExit(f"{name}: feature_names_in_ does not match MODEL_FEATURES")
-        per_model[name] = np.clip(pipeline.predict(X), 0, None)
+
+    # Collapse per-fixture rows back to one row per player (DGW = sum).
+    ids = list(dict.fromkeys(order))
+    row_of = {eid: i for i, eid in enumerate(int(v) for v in features["id"])}
+    per_model = {}
+    for name, preds in raw.items():
+        totals = {eid: 0.0 for eid in ids}
+        for eid, p in zip(order, preds):
+            totals[eid] += float(p)
+        per_model[name] = np.array([totals.get(int(v), 0.0) for v in features["id"]])
 
     # median, not mean: walk-forward backtest against 2025-26 (37 gameweeks,
     # 28,497 rows) showed median-of-4 beating mean-of-4 on MAE in EVERY
