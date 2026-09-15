@@ -16,14 +16,16 @@ TEAMS_CSV = "id,name\n1,Arsenal\n2,Chelsea\n"
 # web_name comes from players_raw.csv, never from the per-GW "name" column.
 GW_HEADER = (
     "element,name,team,position,round,total_points,value,selected,"
-    "opponent_team,was_home,clean_sheets,goals_scored\n"
+    "opponent_team,was_home,clean_sheets,goals_scored,fixture,team_h_score\n"
 )
 
 
-def gw_row(element, full_name, position, round_, opponent_team, was_home, selected):
+def gw_row(element, full_name, position, round_, opponent_team, was_home, selected,
+           fixture=None, points=5, team_h_score=1):
+    fixture = round_ * 100 + element if fixture is None else fixture
     return (
-        f"{element},{full_name},Arsenal,{position},{round_},5,55,{selected},"
-        f"{opponent_team},{was_home},1,1\n"
+        f"{element},{full_name},Arsenal,{position},{round_},{points},55,{selected},"
+        f"{opponent_team},{was_home},1,1,{fixture},{team_h_score}\n"
     )
 
 
@@ -132,6 +134,43 @@ class LoadSeasonTests(unittest.TestCase):
 
         self.assertEqual(df.iloc[0]["web_name"], "Haaland")
         self.assertNotEqual(df.iloc[0]["web_name"], "Erling Haaland")
+
+    def _load(self, gw_csv, raw):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._write_season(base, "2025-26", gw_csv, raw)
+            teams = pd.read_csv(base / "2025-26" / "teams.csv")
+            with patch("scripts.prepare_training_data.VAASTAV_DIR", base):
+                return load_season("2025-26", teams)
+
+    def test_exact_duplicate_rows_collapse_to_one(self):
+        # vaastav 2025-26 lists Kroupi GW1-9 twice, identically.
+        row = gw_row(100, "Junior Kroupi", "FWD", 1, 2, "True", 50, fixture=1)
+        df = self._load(GW_HEADER + row + row, players_raw_row(100, "Kroupi"))
+        self.assertEqual(len(df), 1)
+
+    def test_double_gameweek_keeps_both_fixtures(self):
+        gw_csv = (GW_HEADER
+                  + gw_row(101, "Bukayo Saka", "MID", 33, 2, "True", 500, fixture=301)
+                  + gw_row(101, "Bukayo Saka", "MID", 33, 2, "False", 500, fixture=302))
+        df = self._load(gw_csv, players_raw_row(101, "Saka"))
+        self.assertEqual(len(df), 2)
+
+    def test_postponed_phantom_row_is_dropped_for_the_played_one(self):
+        gw_csv = (GW_HEADER
+                  + gw_row(101, "Bukayo Saka", "MID", 29, 2, "False", 500, fixture=275,
+                           points=0, team_h_score="")
+                  + gw_row(101, "Bukayo Saka", "MID", 39, 2, "False", 500, fixture=275,
+                           points=2, team_h_score=3))
+        df = self._load(gw_csv, players_raw_row(101, "Saka"))
+        self.assertEqual(df["gameweek"].tolist(), [39])
+
+    def test_ambiguous_repeat_raises(self):
+        gw_csv = (GW_HEADER
+                  + gw_row(101, "Bukayo Saka", "MID", 1, 2, "True", 500, fixture=1, points=5)
+                  + gw_row(101, "Bukayo Saka", "MID", 1, 2, "True", 500, fixture=1, points=9))
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            self._load(gw_csv, players_raw_row(101, "Saka"))
 
 
 if __name__ == "__main__":

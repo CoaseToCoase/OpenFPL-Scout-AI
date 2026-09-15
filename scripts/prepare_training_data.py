@@ -58,9 +58,43 @@ RENAME = {
 }
 
 
+def dedupe_fixture_rows(df: pd.DataFrame, season: str) -> pd.DataFrame:
+    """One row per (element, fixture).
+
+    vaastav repeats some pairs. 2025-26 lists Kroupi (element 100) GW1-9 twice,
+    identically -- 10 rows that trained the model on his matches twice and
+    double-weighted them in every later rolling window (found 2026-09-15).
+    Exact copies collapse to one. A pair whose copies DIFFER keeps the one whose
+    match has a score (vaastav's postponed-fixture phantom, e.g. 2019-20 MCI v
+    ARS listed blank at GW29 and played at GW39). Anything else raises rather
+    than guessing which appearance is real.
+    """
+    if "fixture" not in df.columns:
+        raise ValueError(f"{season}: merged_gw.csv has no fixture column")
+    compare = [c for c in df.columns if c != "name"]
+    exact = df.duplicated(subset=compare, keep="first")
+    out = df[~exact]
+    repeated = out.duplicated(subset=["element", "fixture"], keep=False)
+    if repeated.any():
+        played = out["team_h_score"].notna() if "team_h_score" in out.columns else pd.Series(False, index=out.index)
+        groups = out[repeated].groupby(["element", "fixture"])
+        drop = []
+        for key, g in groups:
+            scored = g[played.loc[g.index]]
+            if len(scored) != 1:
+                raise ValueError(f"{season}: ambiguous repeated rows for element/fixture {key}")
+            drop.extend(i for i in g.index if i != scored.index[0])
+        out = out.drop(index=drop)
+    removed = len(df) - len(out)
+    if removed:
+        print(f"  {season}: removed {removed} repeated (element, fixture) rows")
+    return out
+
+
 def load_season(season: str, teams: pd.DataFrame) -> pd.DataFrame:
     path = VAASTAV_DIR / season / "gws" / "merged_gw.csv"
     df = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    df = dedupe_fixture_rows(df, season)
     df = df.drop(columns=["name"], errors="ignore")
     df = df.rename(columns=RENAME)
 
