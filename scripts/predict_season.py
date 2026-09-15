@@ -52,6 +52,25 @@ from src.official_fpl import OfficialFPLClient  # noqa: E402
 LAST_GAMEWEEK = 38
 
 
+def code_version() -> str:
+    """Commit of the inference code, "-dirty" if the tree has local edits.
+
+    The trained model's timestamp is not enough to say two runs are comparable:
+    on 2026-09-15 the ownership feature changed in inference code with the same
+    trained model, and a movers diff across that change would be the code, not
+    the players.
+    """
+    import subprocess
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src", "scripts"],
+                               cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
+        return sha + ("-dirty" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def form_gameweek_status(bootstrap: dict, gameweek: int) -> dict:
     """Was the gameweek the form is frozen at FINAL when this run was made?
 
@@ -147,6 +166,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         "predicted_at_utc": datetime.now(timezone.utc).isoformat(),
         "form_frozen_at_gameweek": first_gw - 1,
         "form_gameweek_status": form_gameweek_status(bootstrap, first_gw - 1),
+        "code_version": code_version(),
         "player_count": len(predictions),
         "predictions": predictions,
     }

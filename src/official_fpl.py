@@ -751,6 +751,7 @@ class OfficialFPLClient:
             for player in players
             if int(player["id"]) not in players_with_history
         ]
+        history_frame = self._ownership_share_by_round(pd.DataFrame(rows))
         if missing_players:
             logger.info(
                 "Using official bootstrap identity baselines for %d players without "
@@ -758,8 +759,37 @@ class OfficialFPLClient:
                 len(missing_players),
             )
             baseline = self._bootstrap_baseline(missing_players, teams)
-            rows.extend(baseline.to_dict(orient="records"))
-        return pd.DataFrame(rows)
+            # Same scale as training: share of the most-owned player. Today's
+            # ownership is the only thing these players have, and they have no
+            # match rows for it to leak into.
+            pcts = [self._number(p.get("selected_by_percent")) for p in bootstrap["elements"]]
+            top_pct = np.nanmax(pcts) if np.isfinite(pcts).any() else np.nan
+            if np.isfinite(top_pct) and top_pct > 0:
+                baseline["selected_by_percent"] = 100 * baseline["selected_by_percent"] / top_pct
+            history_frame = pd.concat([history_frame, baseline], ignore_index=True)
+        return history_frame
+
+    @staticmethod
+    def _ownership_share_by_round(frame: pd.DataFrame) -> pd.DataFrame:
+        """Point-in-time ownership, on the scale the model was trained on.
+
+        Each match row carries FPL's `selected` count FOR THAT ROUND, rescaled to
+        100 * selected / (most-selected player that round) -- exactly what
+        scripts/prepare_training_data.py does to vaastav's per-GW `selected`.
+
+        Until 2026-09-15 every past match row took the player's CURRENT
+        bootstrap `selected_by_percent` instead: a feature from the future,
+        on a different scale (raw % vs share-of-max). A season run with form
+        frozen at GW3 therefore changed as the transfer market moved -- 206
+        players' totals shifted between 12 and 15 Sep with nothing else
+        different, correlation 0.55 with net transfers.
+        """
+        counts = pd.to_numeric(frame.pop("_selected_count"), errors="coerce")
+        top = counts.groupby(frame["gameweek"]).transform("max")
+        frame["selected_by_percent"] = 100 * counts / top.where(top > 0)
+        if counts.isna().all():
+            logger.warning("Official histories carry no per-round `selected`; ownership feature is empty")
+        return frame
 
     def _fetch_player_summaries(
         self, players: List[Mapping[str, Any]]
@@ -839,9 +869,7 @@ class OfficialFPLClient:
             "was_home": bool(history.get("was_home")),
             "opponent_team_name": teams.get(int(history["opponent_team"])),
             "now_cost": OfficialFPLClient._cost(history.get("value")),
-            "selected_by_percent": OfficialFPLClient._number(
-                player.get("selected_by_percent")
-            ),
+            "_selected_count": OfficialFPLClient._number(history.get("selected")),
             "total_points": OfficialFPLClient._number(history.get("total_points")),
             **OfficialFPLClient._official_stats(history),
         }

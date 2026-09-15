@@ -1,3 +1,4 @@
+import pandas as pd
 import unittest
 from urllib.parse import urlparse
 
@@ -158,6 +159,45 @@ class OfficialFPLClientTests(unittest.TestCase):
         self.assertEqual(result.loc[0, "goals"], 1.0)
         self.assertEqual(result.loc[0, "expected_goals"], 0.71)
         self.assertEqual(result.loc[0, "clean_sheet"], 1.0)
+
+    def _two_player_history_client(self, player_10_now_pct="12.5"):
+        payload = add_player(bootstrap(finished=True))
+        payload["elements"][0]["selected_by_percent"] = player_10_now_pct
+        payload["elements"][1]["selected_by_percent"] = "40.0"
+
+        def summary(selected_r1, selected_r2):
+            return {"history": [
+                {"round": 1, "opponent_team": 1, "was_home": False, "value": 75,
+                 "total_points": 2, "selected": selected_r1},
+                {"round": 2, "opponent_team": 2, "was_home": True, "value": 75,
+                 "total_points": 6, "selected": selected_r2},
+            ], "fixtures": [], "history_past": []}
+
+        session = FakeSession({
+            "bootstrap-static/": payload,
+            "element-summary/10/": summary(1000, 3000),
+            "element-summary/11/": summary(4000, 2000),
+        })
+        return OfficialFPLClient(session=session, max_workers=1)
+
+    def test_ownership_is_share_of_most_selected_player_in_that_round(self):
+        """Point-in-time and on the training scale (prepare_training_data.py)."""
+        result = self._two_player_history_client().player_history(gameweek=3)
+
+        share = result.set_index(["id", "gameweek"])["selected_by_percent"]
+        self.assertAlmostEqual(share[(10, 1)], 25.0)    # 1000 / 4000
+        self.assertAlmostEqual(share[(11, 1)], 100.0)
+        self.assertAlmostEqual(share[(10, 2)], 100.0)   # 3000 / 3000
+        self.assertAlmostEqual(share[(11, 2)], 2000 / 3000 * 100)
+        self.assertNotIn("_selected_count", result.columns)
+
+    def test_past_rows_do_not_change_when_todays_ownership_does(self):
+        """The 2026-09-15 bug: every past row took CURRENT selected_by_percent,
+        so a frozen-form run drifted with the transfer market."""
+        before = self._two_player_history_client("12.5").player_history(gameweek=3)
+        after = self._two_player_history_client("65.0").player_history(gameweek=3)
+
+        pd.testing.assert_series_equal(before["selected_by_percent"], after["selected_by_percent"])
 
     def test_retains_players_without_prior_match_history(self):
         payload = add_player(bootstrap(finished=True))
