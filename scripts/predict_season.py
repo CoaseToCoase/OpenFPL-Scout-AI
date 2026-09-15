@@ -52,6 +52,24 @@ from src.official_fpl import OfficialFPLClient  # noqa: E402
 LAST_GAMEWEEK = 38
 
 
+def form_gameweek_status(bootstrap: dict, gameweek: int) -> dict:
+    """Was the gameweek the form is frozen at FINAL when this run was made?
+
+    Recorded at generation time because it cannot be reconstructed later:
+    FPL flips `data_checked` once bonus is confirmed, and a run made before
+    that used provisional points. Checking the gameweek's status next week
+    would call this run final when it was not (2026-09-15: the from-GW5 run
+    was made while all ten GW4 fixtures were still finished_provisional).
+    A gameweek that is not in the events list (form frozen at GW0) has no
+    data to be provisional about, so it counts as final.
+    """
+    event = next((e for e in bootstrap.get("events", []) if e.get("id") == gameweek), None)
+    if event is None:
+        return {"finished": True, "data_checked": True}
+    return {"finished": bool(event.get("finished")),
+            "data_checked": bool(event.get("data_checked"))}
+
+
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -128,6 +146,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         "model_trained_at_utc": trained_at,
         "predicted_at_utc": datetime.now(timezone.utc).isoformat(),
         "form_frozen_at_gameweek": first_gw - 1,
+        "form_gameweek_status": form_gameweek_status(bootstrap, first_gw - 1),
         "player_count": len(predictions),
         "predictions": predictions,
     }
@@ -136,6 +155,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     out_path = out_dir / f"season_from_gw{first_gw}.json"
     out_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
     print(f"Wrote {len(predictions)} season projections (GW{first_gw}-{args.to_gameweek}) -> {out_path}")
+    if not output["form_gameweek_status"]["data_checked"]:
+        print(f"WARNING: GW{first_gw - 1} is not data_checked yet -- this run uses PROVISIONAL "
+              f"points and movers reports will not compare it. Re-run once FPL confirms bonus.")
     print(f"Upload with: gsutil cp {out_path} "
           f"gs://octosuitedatahub/openfpl-scout/{season}/season_from_gw{first_gw}.json")
     return 0
