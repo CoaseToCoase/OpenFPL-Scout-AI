@@ -59,9 +59,7 @@ def augment(prepared: pd.DataFrame, ep_next: pd.DataFrame,
     out = out.drop(columns=["ep_next"])
 
     out["_prior_season"] = out["_season"].map(_previous_season)
-    # Drop rolling 'minutes' to avoid conflict with prior season 'minutes'
-    out = out.drop(columns=["minutes"], errors="ignore")
-    p = priors.rename(columns={"season": "_prior_season"})
+    p = priors.rename(columns={"season": "_prior_season", "minutes": "prior_minutes"})
     out = out.merge(p, on=["_prior_season", "player_code"], how="left")
     if len(out) != before:
         raise ValueError(f"priors join changed row count: {before} -> {len(out)}")
@@ -73,9 +71,9 @@ def augment(prepared: pd.DataFrame, ep_next: pd.DataFrame,
         out["points"].fillna(0.0) / apps.where(apps > 0)
     ).fillna(0.0)
     out["prior_season_minutes_share"] = (
-        out["minutes"].fillna(0.0) / _FULL_SEASON_MINUTES
+        out["prior_minutes"].fillna(0.0) / _FULL_SEASON_MINUTES
     )
-    return out.drop(columns=["_prior_season", "appearances", "minutes", "points",
+    return out.drop(columns=["_prior_season", "appearances", "prior_minutes", "points",
                              "player_code"])
 
 

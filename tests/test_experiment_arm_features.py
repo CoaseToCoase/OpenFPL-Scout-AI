@@ -101,3 +101,21 @@ def test_arms_are_exactly_the_four_specified():
 def test_unknown_arm_raises():
     with pytest.raises(KeyError):
         feature_lists("E_nonsense")
+
+
+def test_rolling_minutes_feature_is_preserved():
+    """Regression test: rolling 'minutes' must not be dropped (it's a model input)."""
+    prepared = pd.DataFrame({
+        "_season": ["2023-24", "2023-24", "2023-24"],
+        "id": [5, 6, 7],
+        "gameweek": [1, 1, 1],
+        "element_type": ["MID", "DEF", "FWD"],
+        "web_name": ["A", "B", "C"],
+        "expected_points": [1.0, 1.0, 1.0],
+        "minutes": [45.0, 90.0, 30.0],  # rolling minutes from history
+    })
+    out = augment(prepared, _ep_next(), _priors())
+    assert "minutes" in out.columns
+    assert out.loc[out["id"] == 5, "minutes"].iloc[0] == 45.0
+    assert out.loc[out["id"] == 6, "minutes"].iloc[0] == 90.0
+    assert out.loc[out["id"] == 7, "minutes"].iloc[0] == 30.0
