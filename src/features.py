@@ -79,7 +79,6 @@ HISTORY_FEATURES = [
     "defensive_contribution",
     "expected_goal_involvements",
     "non_penalty_expected_goal_involvements",
-    "expected_points",
     "PvsxP",
     "touches",
     "touches_opp_box",
@@ -87,7 +86,13 @@ HISTORY_FEATURES = [
     "carries_penalty_area",
 ]
 
-NUMERICAL_FEATURES = ["gameweek", *HISTORY_FEATURES]
+# ep_next_pit is FPL's own forecast for the gameweek being predicted, taken
+# as-is. It is deliberately NOT in HISTORY_FEATURES: averaging a forward
+# forecast over the five PREVIOUS gameweeks (what `expected_points` used to
+# do) throws the forward signal away. Swapping the two lifted Spearman rho
+# from 0.607 to 0.706 on the 2025-26 holdout (2026-09-18, four-arm
+# experiment; see docs/superpowers/results/2026-09-18-arm-findings.md).
+NUMERICAL_FEATURES = ["gameweek", "ep_next_pit", *HISTORY_FEATURES]
 MODEL_FEATURES = [*CATEGORICAL_FEATURES, *NUMERICAL_FEATURES]
 INFERENCE_REQUIRED_COLUMNS = [
     "id",
@@ -173,7 +178,45 @@ def prepare_recent_player_features(
 
     players = latest[identity_columns].join(history, how="left").reset_index()
     players["gameweek"] = int(gameweek)
+    # Point-in-time, never averaged: the value FPL publishes for the gameweek
+    # being predicted. Absent only if the caller supplied a frame without it.
+    if "ep_next" in latest.columns:
+        players["ep_next_pit"] = pd.to_numeric(
+            latest["ep_next"], errors="coerce").reindex(players["id"]).to_numpy()
+    else:
+        players["ep_next_pit"] = np.nan
     return players
+
+
+def attach_point_in_time_ep_next(
+    data: pd.DataFrame, ep_next: pd.DataFrame
+) -> pd.DataFrame:
+    """Join FPL's pre-deadline ep_next onto training rows as ``ep_next_pit``.
+
+    Training rows come from vaastav, whose own `xP` column is scraped AFTER each
+    gameweek and may contain post-match information -- so it must never be used
+    unshifted. ``ep_next`` here comes instead from snapshots taken strictly
+    before each deadline (OctoFPL-vAI `fpl_ep_next_history`), which is what
+    makes a point-in-time join honest rather than leakage.
+
+    ``ep_next`` needs columns season/element_id/gw/ep_next, season in
+    ``2023-24`` form. Row count is preserved; a row with no snapshot is left
+    NaN for the caller's imputer to handle.
+    """
+    before = len(data)
+    joined = data.merge(
+        ep_next[["season", "element_id", "gw", "ep_next"]].rename(
+            columns={"season": "_season", "element_id": "id", "gw": "gameweek"}
+        ),
+        on=["_season", "id", "gameweek"],
+        how="left",
+    )
+    if len(joined) != before:
+        raise ValueError(
+            f"ep_next join changed row count: {before} -> {len(joined)}"
+        )
+    joined["ep_next_pit"] = pd.to_numeric(joined.pop("ep_next"), errors="coerce")
+    return joined
 
 
 def add_rolling_history(

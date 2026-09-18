@@ -883,6 +883,15 @@ class OfficialFPLClient:
             "element_type": int(player["element_type"]),
             "web_name": player.get("web_name") or player.get("second_name"),
             "team_name": teams.get(int(player["team"])),
+            # FPL's own forecast for the UPCOMING gameweek. Point-in-time, not a
+            # match statistic: it is the same value on every history row for a
+            # player, and prepare_recent_player_features takes it from the
+            # latest row rather than averaging it. Before 2026-09-18 the model
+            # used `expected_points` (a rolling mean of FPL's PAST forecasts),
+            # which official FPL never serves -- so it was NaN and imputed to
+            # zero on every production prediction while being 97% populated in
+            # training. A top-four driver, dead on arrival at inference.
+            "ep_next": OfficialFPLClient._number(player.get("ep_next")),
         }
 
     @staticmethod
