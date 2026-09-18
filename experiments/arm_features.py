@@ -34,6 +34,15 @@ def _previous_season(season: str) -> str:
     return "%d-%02d" % (start - 1, (start % 100))
 
 
+def _impute_by_position_median(raw: pd.Series, position: pd.Series) -> pd.Series:
+    """Fill NaNs with the position-group median, falling back to the global
+    median where a position group has no observed value at all (any NaN
+    still remaining downstream is caught by the 0.0-constant SimpleImputer
+    in run_arms.py, the same final fallback ep_next_pit relies on)."""
+    group_median = raw.groupby(position).transform("median")
+    return raw.fillna(group_median).fillna(raw.median())
+
+
 def augment(prepared: pd.DataFrame, ep_next: pd.DataFrame,
             priors: pd.DataFrame) -> pd.DataFrame:
     """Add point-in-time and prior-season columns. Row count is preserved."""
@@ -72,15 +81,23 @@ def augment(prepared: pd.DataFrame, ep_next: pd.DataFrame,
     if len(out) != before:
         raise ValueError(f"priors join changed row count: {before} -> {len(out)}")
 
+    # A player with no prior season (promoted, new signing, youth) gets the
+    # position-group median rather than a hard 0.0, matching the ep_next_pit
+    # imputation above -- a real zero must stay distinguishable from "no
+    # data", so no_prior_season is captured BEFORE any fill.
     out["no_prior_season"] = out["appearances"].isna().astype(int)
-    apps = out["appearances"].fillna(0.0)
-    out["prior_season_appearances"] = apps
-    out["prior_season_ppg"] = (
-        out["points"].fillna(0.0) / apps.where(apps > 0)
-    ).fillna(0.0)
-    out["prior_season_minutes_share"] = (
-        out["prior_minutes"].fillna(0.0) / _FULL_SEASON_MINUTES
-    )
+
+    apps_raw = out["appearances"]
+    ppg_raw = out["points"] / apps_raw.where(apps_raw > 0)
+    minutes_share_raw = out["prior_minutes"] / _FULL_SEASON_MINUTES
+
+    out["prior_season_appearances"] = _impute_by_position_median(
+        apps_raw, out["element_type"])
+    out["prior_season_ppg"] = _impute_by_position_median(
+        ppg_raw, out["element_type"])
+    out["prior_season_minutes_share"] = _impute_by_position_median(
+        minutes_share_raw, out["element_type"])
+
     return out.drop(columns=["_prior_season", "appearances", "prior_minutes", "points",
                              "player_code"])
 

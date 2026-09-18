@@ -121,6 +121,39 @@ def test_rolling_minutes_feature_is_preserved():
     assert out.loc[out["id"] == 7, "minutes"].iloc[0] == 30.0
 
 
+def test_player_with_no_prior_season_gets_position_group_median():
+    """Spec: 'A player with no prior season ... gets the position-group
+    median and a no_prior_season boolean.' Not a hard 0.0 (bug fix)."""
+    prepared = pd.DataFrame({
+        "_season": ["2023-24"] * 4,
+        "id": [5, 6, 9, 10],
+        "gameweek": [1, 1, 1, 1],
+        "element_type": ["MID", "DEF", "MID", "MID"],
+        "web_name": ["A", "B", "E", "F"],
+        "expected_points": [1.0, 1.0, 1.0, 1.0],
+    })
+    ep_next = pd.DataFrame({
+        "season": ["2023-24"] * 4,
+        "element_id": [5, 6, 9, 10],
+        "gw": [1, 1, 1, 1],
+        "ep_next": [6.5, 2.0, 5.0, 3.0],
+        "player_code": [111, 222, 999, 1010],
+    })
+    # Two MID players have prior-season data (ppg 5.0 and 3.0, median 4.0).
+    # Player 1010 (also MID) has no prior-season row at all.
+    priors = pd.DataFrame({
+        "season": ["2022-23", "2022-23"],
+        "player_code": [111, 999],
+        "appearances": [30, 20],
+        "minutes": [2700, 1600],
+        "points": [150, 60],  # ppg 5.0 and 3.0
+    })
+    out = augment(prepared, ep_next, priors)
+    row = out.loc[out["id"] == 10].iloc[0]
+    assert row["no_prior_season"] == 1
+    assert row["prior_season_ppg"] == pytest.approx(4.0)  # position-group median, not 0.0
+
+
 def test_priors_attaches_via_season_wide_player_code_mapping():
     """Regression: player_code must come from season-wide mapping, not per-row join.
 
