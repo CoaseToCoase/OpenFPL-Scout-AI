@@ -40,9 +40,17 @@ def augment(prepared: pd.DataFrame, ep_next: pd.DataFrame,
     out = prepared.copy()
     before = len(out)
 
+    # Attach player_code via season-wide mapping, not per-row join
+    code_map = ep_next[["season", "element_id", "player_code"]].drop_duplicates()
+    code_map = code_map.rename(columns={"element_id": "id", "season": "_season"})
+    out = out.merge(code_map, on=["_season", "id"], how="left")
+    if len(out) != before:
+        raise ValueError(f"player_code join changed row count: {before} -> {len(out)}")
+
+    # Get ep_next VALUE from per-row join (not player_code source)
     ep = ep_next.rename(columns={"element_id": "id", "gw": "gameweek"})
     out = out.merge(
-        ep[["season", "id", "gameweek", "ep_next", "player_code"]],
+        ep[["season", "id", "gameweek", "ep_next"]],
         left_on=["_season", "id", "gameweek"],
         right_on=["season", "id", "gameweek"],
         how="left",
