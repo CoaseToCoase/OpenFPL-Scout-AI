@@ -7,7 +7,31 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.features import CATEGORICAL_FEATURES, NUMERICAL_FEATURES
+from src.features import CATEGORICAL_FEATURES as _LIVE_CATEGORICAL
+
+# PINNED, deliberately not imported from src.features. This experiment ran on
+# 2026-09-18 against the feature set as it stood THEN, and its recorded results
+# (docs/superpowers/results/2026-09-18-arm-findings.md) only mean something if
+# the arms stay fixed. Production has since adopted arm B -- `expected_points`
+# was replaced by `ep_next_pit` in src.features -- so deriving these lists from
+# live production would silently redefine the baseline and make arm A no longer
+# the thing that was measured.
+_BASELINE_CATEGORICAL = ["element_type", "web_name", "team_name",
+                         "opponent_team_name", "was_home"]
+_BASELINE_HISTORY = [
+    "now_cost", "selected_by_percent", "minutes", "total_shots",
+    "shots_on_target", "shots_in_box", "expected_goals",
+    "non_penalty_expected_goals", "goals", "non_penalty_goals",
+    "chances_created", "expected_assists", "assists",
+    "expected_goals_conceded", "goals_conceded", "expected_clean_sheet",
+    "clean_sheet", "clearances", "shot_blocks", "interceptions", "recoveries",
+    "tackles", "clearances_blocks_interceptions", "defensive_contribution",
+    "expected_goal_involvements", "non_penalty_expected_goal_involvements",
+    "expected_points", "PvsxP", "touches", "touches_opp_box",
+    "carries_final_third", "carries_penalty_area",
+]
+CATEGORICAL_FEATURES = _BASELINE_CATEGORICAL
+NUMERICAL_FEATURES = ["gameweek", *_BASELINE_HISTORY]
 
 PRIOR_COLUMNS = [
     "prior_season_ppg",

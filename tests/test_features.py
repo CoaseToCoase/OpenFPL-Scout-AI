@@ -33,7 +33,18 @@ class FeaturePreparationTests(unittest.TestCase):
         self.assertIn("web_name", MODEL_FEATURES)
         self.assertIn("opponent_team_name", MODEL_FEATURES)
         self.assertIn("was_home", MODEL_FEATURES)
-        self.assertEqual(MODEL_FEATURES, [*CATEGORICAL_FEATURES, "gameweek", *HISTORY_FEATURES])
+        # ep_next_pit sits OUTSIDE HISTORY_FEATURES on purpose: it is FPL's
+        # forecast for the gameweek being predicted, and rolling it over the
+        # five previous gameweeks (what `expected_points` did until
+        # 2026-09-18) destroys the forward signal. `expected_points` was also
+        # never served by official FPL, so it was imputed to zero on every
+        # production prediction while being 97% populated in training.
+        self.assertEqual(
+            MODEL_FEATURES,
+            [*CATEGORICAL_FEATURES, "gameweek", "ep_next_pit", *HISTORY_FEATURES],
+        )
+        self.assertNotIn("expected_points", HISTORY_FEATURES)
+        self.assertNotIn("ep_next_pit", HISTORY_FEATURES)
 
     def test_normalizes_legacy_stats_and_team_names(self):
         source = pd.DataFrame(
@@ -135,3 +146,37 @@ class FeaturePreparationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PointInTimeEpNextTests(unittest.TestCase):
+    """ep_next is FPL's forecast for the gameweek being predicted.
+
+    Until 2026-09-18 the model used `expected_points` — a rolling mean of FPL's
+    PAST forecasts — which official FPL never serves, so it was NaN and imputed
+    to zero on every production prediction while being 97% populated in
+    training. A top-four driver, dead at inference.
+    """
+
+    def _history(self, ep_next):
+        rows = []
+        for gw in (1, 2, 3):
+            rows.append({
+                "id": 7, "element_type": 3, "web_name": "Player",
+                "team_name": "Arsenal", "opponent_team_name": "Chelsea",
+                "was_home": True, "gameweek": gw, "minutes": 90,
+                "total_points": 5, "ep_next": ep_next,
+            })
+        return pd.DataFrame(rows)
+
+    def test_ep_next_is_taken_as_is_not_averaged(self):
+        frame = prepare_recent_player_features(self._history(6.5), gameweek=4)
+        self.assertEqual(frame.loc[0, "ep_next_pit"], 6.5)
+
+    def test_ep_next_pit_is_not_a_rolled_history_feature(self):
+        self.assertNotIn("ep_next_pit", HISTORY_FEATURES)
+        self.assertIn("ep_next_pit", MODEL_FEATURES)
+
+    def test_absent_ep_next_yields_nan_not_a_silent_zero(self):
+        history = self._history(6.5).drop(columns=["ep_next"])
+        frame = prepare_recent_player_features(history, gameweek=4)
+        self.assertTrue(pd.isna(frame.loc[0, "ep_next_pit"]))
