@@ -139,6 +139,8 @@ class OfficialFPLClientTests(unittest.TestCase):
                     "recoveries": 5,
                     "tackles": 1,
                     "defensive_contribution": 3,
+                    "bonus": 2,
+                    "bps": 31,
                 }
             ],
             "fixtures": [],
@@ -159,6 +161,8 @@ class OfficialFPLClientTests(unittest.TestCase):
         self.assertEqual(result.loc[0, "goals"], 1.0)
         self.assertEqual(result.loc[0, "expected_goals"], 0.71)
         self.assertEqual(result.loc[0, "clean_sheet"], 1.0)
+        self.assertEqual(result.loc[0, "official_bonus"], 2)
+        self.assertEqual(result.loc[0, "official_bps"], 31)
 
     def _two_player_history_client(self, player_10_now_pct="12.5"):
         payload = add_player(bootstrap(finished=True))
