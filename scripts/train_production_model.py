@@ -16,6 +16,13 @@ Two deliberate differences from trainer.py, which is an EVALUATION script:
 Writes to models/candidate/ -- NEVER models/ -- so a candidate is verified
 against the incumbent before promotion.
 
+PREREQUISITE: data/official/ep_next_pit.csv, which is GITIGNORED (`*.csv` and
+`data*/`) and so absent from a fresh clone. Rebuild it first with
+`bash scripts/export_experiment_inputs.sh`, which reads the OctoFPL-vAI DB over
+SSH to MMMS. It currently covers 2023_24..2025_26; extend the season list in
+that script before retraining on any later season.
+
+    bash scripts/export_experiment_inputs.sh    # once, if the CSV is missing
     python scripts/train_production_model.py
 """
 from __future__ import annotations
@@ -87,6 +94,12 @@ def main() -> None:
     raw = raw.dropna(subset=["gameweek", TARGET_COLUMN])
     prepared = add_rolling_history(raw, window=5, shift=1)
 
+    if not EP_NEXT_PATH.exists():
+        raise SystemExit(
+            f"{EP_NEXT_PATH} not found. It is gitignored, so it does not come "
+            f"with a clone. Rebuild it with:\n"
+            f"    bash scripts/export_experiment_inputs.sh"
+        )
     ep_next = pd.read_csv(EP_NEXT_PATH)
     ep_next["season"] = ep_next["season"].astype(str).str.replace("_", "-", regex=False)
     prepared = attach_point_in_time_ep_next(prepared, ep_next)

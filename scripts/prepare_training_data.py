@@ -27,6 +27,12 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.features import HISTORY_FEATURES  # noqa: E402
 
 VAASTAV_DIR = Path("/tmp/vaastav_check/data")
+# EXTEND THIS as each season completes. On 2026-09-18 the deployed model was
+# found to have never seen 2025-26 -- trainer.py holds the newest season out to
+# evaluate and nobody re-fit on the full corpus, so Leeds and Sunderland were
+# unknown to it despite playing the whole season, along with 137 live players
+# (21%). Leaving this list to go stale reproduces exactly that bug.
+# Add "2026-27" once it is complete; do not add a season still in progress.
 SEASONS = ("2023-24", "2024-25", "2025-26")
 POSITION_TO_ELEMENT_TYPE = {"GK": 1, "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4}
 
